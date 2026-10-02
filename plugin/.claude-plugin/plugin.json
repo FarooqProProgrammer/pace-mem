@@ -1,0 +1,7 @@
+{
+  "name": "pace-mem",
+  "version": "0.1.0",
+  "description": "Persistent memory for Claude Code: records what each session did, compresses it into searchable observations, and brings relevant history into new sessions.",
+  "author": { "name": "JumpPace" },
+  "keywords": ["memory", "context", "search", "sqlite"]
+}

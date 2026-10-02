@@ -1,0 +1,18 @@
+{
+  "name": "pace-mem",
+  "owner": {
+    "name": "JumpPace",
+    "email": "team-mern@jumppace.com"
+  },
+  "metadata": {
+    "description": "JumpPace plugins for Claude Code",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "pace-mem",
+      "source": "./plugin",
+      "description": "Persistent, searchable memory across Claude Code sessions"
+    }
+  ]
+}
