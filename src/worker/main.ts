@@ -8,8 +8,9 @@ import { log } from './log.js';
 
 const settings = loadSettings();
 const store = new Store(paths.db());
-const processor = new Processor(store, createLlm(settings), settings);
-const server = createWorkerServer(store, processor, settings);
+const llm = createLlm(settings);
+const processor = new Processor(store, llm, settings);
+const server = createWorkerServer(store, processor, settings, llm);
 
 server.on('error', (err: NodeJS.ErrnoException) => {
   // Another worker already owns the port: that one serves everyone, so exit quietly.

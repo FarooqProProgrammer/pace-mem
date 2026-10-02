@@ -456,6 +456,40 @@ export class Store {
     );
   }
 
+  /** Per-project counts for the dashboard, including projects with only raw events so far. */
+  projectStats(): { project: string; sessions: number; observations: number; summaries: number; last_at: number }[] {
+    return this.all(
+      `SELECT s.project,
+              COUNT(*) AS sessions,
+              (SELECT COUNT(*) FROM observations o WHERE o.project = s.project) AS observations,
+              (SELECT COUNT(*) FROM summaries m WHERE m.project = s.project) AS summaries,
+              MAX(s.last_activity_at) AS last_at
+       FROM sessions s GROUP BY s.project ORDER BY last_at DESC`,
+    );
+  }
+
+  deleteObservations(ids: number[]): number {
+    const clean = [...new Set(ids.map(Number).filter(Number.isInteger))];
+    if (clean.length === 0) return 0;
+    const marks = clean.map(() => '?').join(',');
+    return this.tx(() => {
+      this.db.prepare(`UPDATE tool_events SET observation_id = NULL WHERE observation_id IN (${marks})`).run(...clean);
+      return Number(this.db.prepare(`DELETE FROM observations WHERE id IN (${marks})`).run(...clean).changes);
+    });
+  }
+
+  /** Forgets everything recorded for a project. */
+  deleteProject(project: string): number {
+    return this.tx(() => {
+      const removed = Number(this.db.prepare('DELETE FROM observations WHERE project = ?').run(project).changes);
+      this.db.prepare('DELETE FROM summaries WHERE project = ?').run(project);
+      this.db.prepare('DELETE FROM tool_events WHERE project = ?').run(project);
+      this.db.prepare('DELETE FROM user_prompts WHERE project = ?').run(project);
+      this.db.prepare('DELETE FROM sessions WHERE project = ?').run(project);
+      return removed;
+    });
+  }
+
   stats(): Record<string, number> {
     const one = (sql: string) => Number(this.get<{ n: number }>(sql)?.n ?? 0);
     return {

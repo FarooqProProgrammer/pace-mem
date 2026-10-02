@@ -1,6 +1,6 @@
 # pace-mem
 
-Persistent memory for Claude Code. pace-mem records what each session does, compresses it into short searchable **observations** (decisions, bug fixes, discoveries, changes), writes a summary after each request, and gives new sessions an index of recent work, so Claude doesn't start from zero every time.
+Persistent memory for Claude Code and Cursor. pace-mem records what each session does, compresses it into short searchable **observations** (decisions, bug fixes, discoveries, changes), writes a summary after each request, and gives new sessions an index of recent work, so Claude doesn't start from zero every time.
 
 - **Automatic**: five Claude Code hooks capture prompts and tool calls. Nothing to remember to run.
 - **Cheap to recall**: new sessions get a compact index; details are fetched on demand through 3 MCP tools (`search` → `timeline` → `get_observations`).
@@ -15,7 +15,30 @@ claude plugin marketplace add D:/product/mem
 claude plugin install pace-mem@pace-mem
 ```
 
-Restart Claude Code. The worker starts automatically on the first session; open **http://127.0.0.1:37800** to watch memories arrive.
+Restart Claude Code. The worker starts automatically on the first session; open the dashboard at **http://127.0.0.1:37800**.
+
+### Cursor
+
+```bash
+npm install && npm run build            # only when working from source
+node plugin/scripts/cli.mjs cursor install            # all projects (~/.cursor)
+node plugin/scripts/cli.mjs cursor install --project path/to/repo   # one project
+```
+
+Or use **Integrations → Install in Cursor** in the dashboard. The installer copies the scripts to `~/.pace-mem/runtime`, merges five hooks (`sessionStart`, `beforeSubmitPrompt`, `postToolUse`, `stop`, `sessionEnd`) into Cursor's `hooks.json` and the MCP server into `mcp.json`, keeps other tools' entries, and saves the previous files as `*.pace-mem.bak`. Reload Cursor afterwards. `cursor uninstall` removes only pace-mem's entries.
+
+Cursor and Claude Code share one database, so memories recorded in one editor show up in the other for the same project folder. If Claude Code isn't installed, switch the provider to **Anthropic API key** in the dashboard (the default provider runs the `claude` CLI).
+
+## Dashboard
+
+http://127.0.0.1:37800 (or your configured port):
+
+- **Memories**: live feed, search, filter by project and type, delete individual memories.
+- **Settings**: provider, model, effort, API key (stored in `settings.json`, never sent back to the browser), session-context size with a live preview of what new sessions see, secret redaction, ignored tools, payload size, batching, port. Saved changes apply to the running worker immediately (the port needs a restart). **Test connection** makes one small model call with the saved settings.
+- **Integrations**: Claude Code plugin status; install, update or remove Cursor.
+- **Status**: counts, queue and failed events (with retry), per-project stats, delete a project's memory (type the name to confirm), file locations.
+
+The dashboard talks to the worker on localhost only; the worker rejects non-local Host headers and non-JSON writes.
 
 > If you also run claude-mem, disable one of them. Running both doubles the compression cost and injects two context blocks.
 
@@ -41,13 +64,14 @@ Browser ────────────────────────
 
 ## Configuration
 
-Create `~/.pace-mem/settings.json` with any of these keys (all optional):
+Use the dashboard's Settings tab, or edit `~/.pace-mem/settings.json` (all keys optional):
 
 | Key | Default | Meaning |
 |---|---|---|
-| `provider` | `"claude-cli"` | `claude-cli` runs `claude -p` with your existing Claude Code login. `anthropic` calls the API with `ANTHROPIC_API_KEY`. |
+| `provider` | `"claude-cli"` | `claude-cli` runs `claude -p` with your existing Claude Code login. `anthropic` calls the API with `anthropicApiKey` or `ANTHROPIC_API_KEY`. |
+| `anthropicApiKey` | none | API key for the `anthropic` provider. Useful when the editor doesn't pass `ANTHROPIC_API_KEY` to the worker. |
 | `model` | `"claude-opus-5-5"` | Model used for compression and summaries. `"claude-haiku-4-5"` is much cheaper. |
-| `effort` | `"low"` | Effort level for compression calls. |
+| `effort` | `"low"` | Effort level for compression calls. Ignored for models that don't support it (e.g. Haiku 4.5). |
 | `port` | `37800` | Worker port (localhost only). |
 | `batchSize` | `15` | Max tool events per model call. |
 | `batchDelaySeconds` | `4` | Quiet period before a batch is compressed. |
@@ -90,8 +114,10 @@ npm run build       # bundles src/ into plugin/scripts/*.mjs (committed, so inst
 
 | Path | What |
 |---|---|
-| `src/hooks/hook.ts` | Hook entry point (`hook.mjs <event>`) |
-| `src/worker/` | HTTP server, queue processor, model providers, prompts, viewer |
+| `src/hooks/hook.ts`, `hosts.ts` | Hook entry point and per-editor adapters (`hook.mjs <event>`, `hook.mjs cursor <hookName>`) |
+| `src/cli/cursor.ts` | Cursor installer (merges `hooks.json` / `mcp.json`) |
+| `src/worker/viewer.ts`, `settings.ts` | Dashboard page and settings validation |
+| `src/worker/` | HTTP server, queue processor, model providers, prompts |
 | `src/db/store.ts` | SQLite schema, queue operations, FTS5 search |
 | `src/mcp/server.ts` | MCP tools over stdio |
 | `src/cli/index.ts` | `pace-mem` CLI |

@@ -132,3 +132,68 @@ describe('worker API', () => {
     expect(store.stats().pending).toBe(0);
   });
 });
+
+describe('dashboard API', () => {
+  it('saves settings, applies them live, and never returns the API key', async () => {
+    const res = await post('/api/settings', { model: 'claude-haiku-4-5', batchSize: 7, skipTools: ['WebSearch'], anthropicApiKey: 'sk-ant-test-1234' });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.changed).toEqual(expect.arrayContaining(['model', 'batchSize', 'skipTools', 'anthropicApiKey']));
+    expect(body.restartRequired).toBe(false);
+    expect(settings.batchSize).toBe(7); // same object the processor reads
+    expect(settings.anthropicApiKey).toBe('sk-ant-test-1234');
+
+    const read = await (await fetch(base + '/api/settings')).json();
+    expect(JSON.stringify(read)).not.toContain('sk-ant-test-1234');
+    expect(read.settings).toMatchObject({ hasApiKey: true, apiKeyHint: '…1234', model: 'claude-haiku-4-5' });
+
+    // Skip list edits apply to the next event without a restart.
+    await post('/api/sessions/prompt', { session_id: 's-dash', cwd: '/work/dash', prompt: 'p' });
+    expect(await (await post('/api/events', { session_id: 's-dash', cwd: '/work/dash', tool_name: 'WebSearch', tool_input: {}, tool_response: '' })).json()).toEqual({
+      skipped: 'tool',
+    });
+
+    await post('/api/settings', { anthropicApiKey: '' });
+    expect(settings.anthropicApiKey).toBeUndefined();
+  });
+
+  it('rejects invalid settings with per-field issues and changes nothing', async () => {
+    const before = settings.batchSize;
+    const res = await post('/api/settings', { batchSize: 0, provider: 'openai', unknownKey: 1 });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.issues.map((i: { field: string }) => i.field)).toEqual(expect.arrayContaining(['batchSize', 'provider']));
+    expect(settings.batchSize).toBe(before);
+  });
+
+  it('flags port changes as needing a restart, and resets to defaults', async () => {
+    expect((await (await post('/api/settings', { port: 39999 })).json()).restartRequired).toBe(true);
+    const reset = await (await post('/api/settings/reset', {})).json();
+    expect(reset.settings).toMatchObject({ batchSize: 15, model: 'claude-opus-5-5' });
+    expect(reset.settings.port).toBe(39999); // reset never moves the running worker
+  });
+
+  it('deletes single observations and whole projects (with confirmation)', async () => {
+    const sess = store.ensureSession('s-del', 'to-delete');
+    const id = store.insertObservation({
+      session_id: sess.id, project: 'to-delete', prompt_number: 1, type: 'change', title: 'Temp', subtitle: '', narrative: '',
+      facts: [], concepts: [], files_read: [], files_modified: [],
+    });
+    store.insertObservation({
+      session_id: sess.id, project: 'to-delete', prompt_number: 1, type: 'change', title: 'Temp 2', subtitle: '', narrative: '',
+      facts: [], concepts: [], files_read: [], files_modified: [],
+    });
+    expect(await (await post('/api/observations/delete', { ids: [id] })).json()).toEqual({ deleted: 1 });
+    expect(store.searchObservations({ query: 'Temp', project: 'to-delete' })).toHaveLength(1);
+
+    expect((await post('/api/projects/delete', { project: 'to-delete', confirm: 'nope' })).status).toBe(400);
+    expect(await (await post('/api/projects/delete', { project: 'to-delete', confirm: 'to-delete' })).json()).toEqual({ deleted: 1 });
+    const stats = await (await fetch(base + '/api/projects/stats')).json();
+    expect(stats.find((p: { project: string }) => p.project === 'to-delete')).toBeUndefined();
+  });
+
+  it('serves the dashboard', async () => {
+    const html = await (await fetch(base + '/')).text();
+    for (const tab of ['memories', 'settings', 'integrations', 'status']) expect(html).toContain(`data-tab="${tab}"`);
+  });
+});

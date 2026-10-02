@@ -44,7 +44,7 @@ export class ClaudeCliLlm implements Llm {
     const args = [
       '-p',
       '--model', this.settings.model,
-      '--effort', this.settings.effort,
+      ...(supportsEffort(this.settings.model) ? ['--effort', this.settings.effort] : []),
       '--tools', '',
       '--setting-sources', '',
       '--strict-mcp-config',
@@ -90,24 +90,41 @@ export class ClaudeCliLlm implements Llm {
 
 const FALLBACK_MODELS = /^claude-(opus-5|fable-5-1|sonnet-5-5)/;
 
+/** Haiku, Sonnet 4.5 and pre-4.5 models reject the effort parameter. */
+export function supportsEffort(model: string): boolean {
+  return !/haiku|sonnet-4-5|claude-3|-4-0|-4-1|-4-2025/.test(model);
+}
+
 /** Calls the Messages API with ANTHROPIC_API_KEY (or any credential the SDK resolves). */
 export class AnthropicApiLlm implements Llm {
-  private readonly client: Anthropic;
+  private client?: Anthropic;
+  private clientKey?: string;
 
-  constructor(private readonly settings: Settings) {
-    this.client = settings.anthropicApiKey ? new Anthropic({ apiKey: settings.anthropicApiKey }) : new Anthropic();
+  constructor(private readonly settings: Settings) {}
+
+  /** Rebuilt when the key changes in the dashboard. */
+  private getClient(): Anthropic {
+    const key = this.settings.anthropicApiKey;
+    if (!this.client || this.clientKey !== key) {
+      this.client = key ? new Anthropic({ apiKey: key }) : new Anthropic();
+      this.clientKey = key;
+    }
+    return this.client;
   }
 
   async generate<T extends z.ZodType>(req: LlmRequest<T>): Promise<z.infer<T>> {
     // Server-side fallback reroutes a safety refusal to another model instead of dropping the batch.
     const fallback = FALLBACK_MODELS.test(this.settings.model);
     try {
-      const res = await this.client.beta.messages.parse({
+      const res = await this.getClient().beta.messages.parse({
         model: this.settings.model,
         max_tokens: 16000,
         system: req.system,
         messages: [{ role: 'user', content: req.prompt }],
-        output_config: { effort: this.settings.effort, format: betaZodOutputFormat(req.schema) },
+        output_config: {
+          ...(supportsEffort(this.settings.model) ? { effort: this.settings.effort } : {}),
+          format: betaZodOutputFormat(req.schema),
+        },
         ...(fallback ? { betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' as const } : {}),
       });
       if (res.stop_reason === 'refusal') throw new LlmError(`model refused: ${res.stop_details?.category ?? 'unknown'}`, true);
@@ -125,6 +142,9 @@ export class AnthropicApiLlm implements Llm {
   }
 }
 
+/** Picks the provider on every call, so a provider switch in the dashboard applies without a restart. */
 export function createLlm(settings: Settings): Llm {
-  return settings.provider === 'anthropic' ? new AnthropicApiLlm(settings) : new ClaudeCliLlm(settings);
+  const cli = new ClaudeCliLlm(settings);
+  const api = new AnthropicApiLlm(settings);
+  return { generate: (req) => (settings.provider === 'anthropic' ? api : cli).generate(req) };
 }

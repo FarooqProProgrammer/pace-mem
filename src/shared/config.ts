@@ -49,7 +49,7 @@ export const DEFAULT_SKIP_TOOLS = [
   'ScheduleWakeup',
 ];
 
-const DEFAULTS: Settings = {
+export const DEFAULTS: Settings = {
   port: 37800,
   provider: 'claude-cli',
   model: 'claude-opus-5-5',

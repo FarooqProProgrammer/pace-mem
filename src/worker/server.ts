@@ -1,8 +1,16 @@
+import { existsSync, readFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import { projectFromCwd, type Settings } from '../shared/config.js';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { z } from 'zod';
+import { DEFAULTS, dataDir, paths, projectFromCwd, type Settings } from '../shared/config.js';
+import { cursorStatus, installCursor, uninstallCursor, userCursorDir } from '../cli/cursor.js';
 import { sanitize, stripPrivate } from '../shared/privacy.js';
 import { OBSERVATION_TYPES, type SearchParams, type Store } from '../db/store.js';
 import type { Processor } from './processor.js';
+import type { Llm } from './llm.js';
+import { publicSettings, resetSettings, saveSettings } from './settings.js';
 import { fullObservation, indexTable, sessionContext, summaryBlock } from './format.js';
 import { VIEWER_HTML } from './viewer.js';
 import { log } from './log.js';
@@ -66,8 +74,19 @@ function searchParams(q: URLSearchParams): SearchParams {
   };
 }
 
-export function createWorkerServer(store: Store, processor: Processor, settings: Settings): Server {
-  const skip = new Set(settings.skipTools);
+/** Whether pace-mem is enabled as a Claude Code plugin (user settings). */
+function claudeCodeStatus(): { installed: boolean; enabled: boolean } {
+  try {
+    const file = join(homedir(), '.claude', 'settings.json');
+    const enabled = existsSync(file) ? (JSON.parse(readFileSync(file, 'utf8')).enabledPlugins ?? {}) : {};
+    const key = Object.keys(enabled).find((k) => k.startsWith('pace-mem@'));
+    return { installed: !!key, enabled: !!key && enabled[key] !== false };
+  } catch {
+    return { installed: false, enabled: false };
+  }
+}
+
+export function createWorkerServer(store: Store, processor: Processor, settings: Settings, llm?: Llm): Server {
   const clean = (v: unknown) => sanitize(v, { redact: settings.redactSecrets, maxBytes: settings.maxPayloadBytes });
 
   const sessionFor = (body: Json) => {
@@ -110,7 +129,8 @@ export function createWorkerServer(store: Store, processor: Processor, settings:
       const tool = str(body.tool_name);
       if (!tool) throw new HttpError(400, 'tool_name is required');
       // Our own memory lookups are not new knowledge.
-      if (skip.has(tool) || tool.includes('pace-mem')) return { skipped: 'tool' };
+      // Read live so skip-list edits in the dashboard apply to the next event.
+      if (settings.skipTools.includes(tool) || tool.includes('pace-mem')) return { skipped: 'tool' };
       const session = sessionFor(body);
       const added = store.addToolEvent({
         session_id: session.id,
@@ -202,6 +222,86 @@ export function createWorkerServer(store: Store, processor: Processor, settings:
 
     'POST /api/retry-failed': () => ({ requeued: store.retryFailed() }),
 
+    // ── dashboard: settings ──────────────────────────────────────────────
+    'GET /api/settings': () => ({
+      settings: publicSettings(settings),
+      defaults: publicSettings(DEFAULTS),
+      paths: { data: dataDir(), db: paths.db(), settings: paths.settings(), log: paths.log() },
+      // Environment variables win over the settings file at the next worker start.
+      envOverrides: { port: 'PACE_MEM_PORT', provider: 'PACE_MEM_PROVIDER', model: 'PACE_MEM_MODEL' } as Record<string, string>,
+      activeEnvOverrides: ['PACE_MEM_PORT', 'PACE_MEM_PROVIDER', 'PACE_MEM_MODEL'].filter((k) => process.env[k]),
+    }),
+
+    'POST /api/settings': ({ body }) => {
+      const result = saveSettings(settings, body);
+      log(`settings updated: ${result.changed.join(', ') || 'no changes'}`);
+      return { ...result, settings: publicSettings(settings) };
+    },
+
+    'POST /api/settings/reset': () => {
+      resetSettings(settings);
+      log('settings reset to defaults');
+      return { settings: publicSettings(settings) };
+    },
+
+    // One tiny model call with the current settings, so a bad key or model shows up immediately.
+    'POST /api/settings/test': async () => {
+      if (!llm) throw new HttpError(501, 'no model configured');
+      const started = Date.now();
+      try {
+        const out = await llm.generate({
+          system: 'You check that a connection works.',
+          prompt: 'Reply with ok set to true.',
+          schema: z.object({ ok: z.boolean() }),
+        });
+        return { ok: out.ok === true, provider: settings.provider, model: settings.model, ms: Date.now() - started };
+      } catch (err) {
+        return { ok: false, provider: settings.provider, model: settings.model, error: (err as Error).message };
+      }
+    },
+
+    // ── dashboard: data ──────────────────────────────────────────────────
+    'GET /api/projects/stats': () => store.projectStats(),
+
+    'POST /api/observations/delete': ({ body }) => {
+      const ids = Array.isArray(body.ids) ? body.ids.map(Number) : [];
+      if (ids.length === 0) throw new HttpError(400, 'ids must be a non-empty array');
+      return { deleted: store.deleteObservations(ids) };
+    },
+
+    'POST /api/projects/delete': ({ body }) => {
+      const project = str(body.project);
+      if (!project) throw new HttpError(400, 'project is required');
+      if (body.confirm !== project) throw new HttpError(400, 'confirm must repeat the project name');
+      log(`deleted all memory for project ${project}`);
+      return { deleted: store.deleteProject(project) };
+    },
+
+    // ── dashboard: integrations ──────────────────────────────────────────
+    'GET /api/integrations': () => ({
+      claudeCode: claudeCodeStatus(),
+      cursor: { ...cursorStatus(userCursorDir()), dir: userCursorDir() },
+    }),
+
+    'POST /api/integrations/cursor/install': () => {
+      const result = installCursor({
+        cursorDir: userCursorDir(),
+        runtimeDir: join(dataDir(), 'runtime'),
+        // The worker bundle sits next to the other bundled scripts.
+        sourceDir: fileURLToPath(new URL('.', import.meta.url)),
+        nodePath: process.execPath,
+        platform: process.platform,
+      });
+      log('installed Cursor integration');
+      return { ...result, status: cursorStatus(userCursorDir()) };
+    },
+
+    'POST /api/integrations/cursor/uninstall': () => {
+      uninstallCursor(userCursorDir());
+      log('removed Cursor integration');
+      return { status: cursorStatus(userCursorDir()) };
+    },
+
     'POST /api/shutdown': () => {
       setTimeout(() => process.emit('SIGTERM'), 50);
       return { ok: true };
@@ -232,6 +332,11 @@ export function createWorkerServer(store: Store, processor: Processor, settings:
         res.end(JSON.stringify(out));
       }
     } catch (err) {
+      if (err instanceof z.ZodError) {
+        res.writeHead(400, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: 'invalid settings', issues: err.issues.map((i) => ({ field: i.path.join('.'), message: i.message })) }));
+        return;
+      }
       const status = err instanceof HttpError ? err.status : 500;
       if (status === 500) log(`request ${raw.method} ${raw.url} failed: ${(err as Error).stack ?? err}`);
       if (!res.headersSent) res.writeHead(status, { 'content-type': 'application/json' });
