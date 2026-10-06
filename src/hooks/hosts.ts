@@ -56,7 +56,13 @@ const CURSOR_EVENTS: Record<string, MemEvent> = {
 };
 
 // Cursor reports MCP calls as `MCP:<tool>` without the server name.
-const OWN_MCP_TOOLS = new Set(['MCP:search', 'MCP:timeline', 'MCP:get_observations']);
+const OWN_MCP_TOOLS = new Set([
+  'MCP:search',
+  'MCP:timeline',
+  'MCP:get_observations',
+  'MCP:save_memory',
+  'MCP:save_summary',
+]);
 
 export const cursor: Host = {
   event: (name) => CURSOR_EVENTS[name],

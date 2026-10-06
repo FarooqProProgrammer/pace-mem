@@ -76,7 +76,8 @@ export function sessionContext(project: string, summaries: SummaryRow[], observa
   const parts = [
     `# pace-mem — memory for "${project}"`,
     'What earlier sessions in this project did. This is an index: when a past item is relevant, fetch details with the pace-mem MCP tools ' +
-      '(`search` → `timeline` → `get_observations` with the IDs below) instead of re-reading files.',
+      '(`search` → `timeline` → `get_observations` with the IDs below) instead of re-reading files. ' +
+      'When you learn or decide something durable in this session, persist it with `save_memory` (and `save_summary` after a substantial request). Nothing else writes memories.',
   ];
   if (summaries.length) parts.push('## Recent session summaries', ...summaries.map(summaryBlock));
   if (observations.length) parts.push('## Recent observations (newest first)', indexTable(observations));

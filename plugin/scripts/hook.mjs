@@ -157,7 +157,13 @@ var CURSOR_EVENTS = {
   stop: "stop",
   sessionEnd: "session-end"
 };
-var OWN_MCP_TOOLS = /* @__PURE__ */ new Set(["MCP:search", "MCP:timeline", "MCP:get_observations"]);
+var OWN_MCP_TOOLS = /* @__PURE__ */ new Set([
+  "MCP:search",
+  "MCP:timeline",
+  "MCP:get_observations",
+  "MCP:save_memory",
+  "MCP:save_summary"
+]);
 var cursor = {
   event: (name) => CURSOR_EVENTS[name],
   normalize: (raw) => {

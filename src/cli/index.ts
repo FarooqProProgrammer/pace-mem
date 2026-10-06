@@ -1,5 +1,4 @@
 /** `pace-mem <command>`: manage the worker, install into editors, and query memory from a terminal. */
-import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -17,7 +16,6 @@ Usage:
   pace-mem show <id...>          Full details for observation IDs
   pace-mem context [project]     Print the context injected at session start
   pace-mem logs [lines]          Tail the worker log
-  pace-mem retry                 Requeue tool events whose compression failed
   pace-mem viewer                Print the web viewer URL
 
   pace-mem cursor install [--project <dir>]    Add hooks + MCP server to Cursor (all projects, or one)
@@ -40,10 +38,6 @@ async function text(path: string, body?: unknown): Promise<string> {
   const out = await res.text();
   if (!res.ok) throw new Error(out);
   return out;
-}
-
-function claudeCliAvailable(): boolean {
-  return spawnSync('claude', ['--version'], { stdio: 'ignore', windowsHide: true }).status === 0;
 }
 
 function cursorCommand(args: string[]): void {
@@ -70,14 +64,7 @@ function cursorCommand(args: string[]): void {
             'Running two memory tools doubles model cost and context; consider removing one.',
         );
       }
-      const s = loadSettings();
-      if (s.provider === 'claude-cli' && !claudeCliAvailable()) {
-        console.log(
-          `\n! Compression uses the \`claude\` CLI, which isn't on PATH. Install Claude Code, or set in ${paths.settings()}:\n` +
-            '    { "provider": "anthropic", "anthropicApiKey": "sk-ant-..." }',
-        );
-      }
-      console.log('\nRestart Cursor (or reload the window) so it picks up the hooks.');
+      console.log('\nRestart Cursor (or reload the window) so it picks up the hooks and MCP tools.');
       return;
     }
     case 'uninstall': {
@@ -111,13 +98,12 @@ async function main(): Promise<void> {
     }
     case 'status': {
       const s = loadSettings();
-      if (!(await isHealthy())) return console.log(`worker: not running (port ${s.port})\nprovider: ${s.provider} · model: ${s.model}`);
+      if (!(await isHealthy())) return console.log(`worker: not running (port ${s.port})`);
       const [health, stats] = await Promise.all([
         request('/api/health').then((r) => r.json()),
         request('/api/stats').then((r) => r.json()),
       ]);
       console.log(`worker: running · pid ${health.pid} · v${health.version} · ${workerUrl()}`);
-      console.log(`provider: ${health.provider} · model: ${health.model}`);
       console.log(Object.entries(stats).map(([k, v]) => `${k}: ${v}`).join(' · '));
       return;
     }
@@ -142,10 +128,6 @@ async function main(): Promise<void> {
       if (!existsSync(paths.log())) return console.log('no log yet');
       const lines = readFileSync(paths.log(), 'utf8').trimEnd().split('\n');
       return console.log(lines.slice(-Number(args[0] ?? 50)).join('\n'));
-    }
-    case 'retry': {
-      const out = JSON.parse(await text('/api/retry-failed', {}));
-      return console.log(`requeued ${out.requeued} failed events`);
     }
     case 'cursor':
       return cursorCommand(args);

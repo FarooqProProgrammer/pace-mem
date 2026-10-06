@@ -1,16 +1,16 @@
 import { rmSync, writeFileSync } from 'node:fs';
 import { loadSettings, paths } from '../shared/config.js';
 import { Store } from '../db/store.js';
-import { createLlm } from './llm.js';
 import { Processor } from './processor.js';
 import { createWorkerServer, VERSION } from './server.js';
 import { log } from './log.js';
+import type { Llm } from './llm.js';
 
 const settings = loadSettings();
 const store = new Store(paths.db());
-const llm = createLlm(settings);
+const llm: Llm = { generate: async () => { throw new Error('model compression is disabled'); } };
 const processor = new Processor(store, llm, settings);
-const server = createWorkerServer(store, processor, settings, llm);
+const server = createWorkerServer(store, processor, settings);
 
 server.on('error', (err: NodeJS.ErrnoException) => {
   // Another worker already owns the port: that one serves everyone, so exit quietly.
@@ -20,8 +20,7 @@ server.on('error', (err: NodeJS.ErrnoException) => {
 
 server.listen(settings.port, '127.0.0.1', () => {
   writeFileSync(paths.pid(), String(process.pid));
-  processor.start();
-  log(`pace-mem worker ${VERSION} listening on 127.0.0.1:${settings.port} (provider=${settings.provider}, model=${settings.model})`);
+  log(`pace-mem worker ${VERSION} listening on 127.0.0.1:${settings.port}`);
 });
 
 let stopping = false;
@@ -29,7 +28,6 @@ function shutdown() {
   if (stopping) return;
   stopping = true;
   log('worker shutting down');
-  processor.stop();
   server.closeAllConnections();
   server.close(() => {
     store.close();

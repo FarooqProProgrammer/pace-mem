@@ -2,7 +2,6 @@
 import { createRequire as __cr } from 'node:module'; const require = __cr(import.meta.url);
 
 // src/cli/index.ts
-import { spawnSync } from "node:child_process";
 import { existsSync as existsSync3, readFileSync as readFileSync3 } from "node:fs";
 import { join as join3, resolve } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
@@ -233,7 +232,6 @@ Usage:
   pace-mem show <id...>          Full details for observation IDs
   pace-mem context [project]     Print the context injected at session start
   pace-mem logs [lines]          Tail the worker log
-  pace-mem retry                 Requeue tool events whose compression failed
   pace-mem viewer                Print the web viewer URL
 
   pace-mem cursor install [--project <dir>]    Add hooks + MCP server to Cursor (all projects, or one)
@@ -254,9 +252,6 @@ async function text(path, body) {
   const out = await res.text();
   if (!res.ok) throw new Error(out);
   return out;
-}
-function claudeCliAvailable() {
-  return spawnSync("claude", ["--version"], { stdio: "ignore", windowsHide: true }).status === 0;
 }
 function cursorCommand(args) {
   const project = flag(args, "project");
@@ -282,15 +277,7 @@ function cursorCommand(args) {
 ! Also installed in Cursor: ${result.others.join(", ")}. Running two memory tools doubles model cost and context; consider removing one.`
         );
       }
-      const s = loadSettings();
-      if (s.provider === "claude-cli" && !claudeCliAvailable()) {
-        console.log(
-          `
-! Compression uses the \`claude\` CLI, which isn't on PATH. Install Claude Code, or set in ${paths.settings()}:
-    { "provider": "anthropic", "anthropicApiKey": "sk-ant-..." }`
-        );
-      }
-      console.log("\nRestart Cursor (or reload the window) so it picks up the hooks.");
+      console.log("\nRestart Cursor (or reload the window) so it picks up the hooks and MCP tools.");
       return;
     }
     case "uninstall": {
@@ -323,14 +310,12 @@ async function main() {
     }
     case "status": {
       const s = loadSettings();
-      if (!await isHealthy()) return console.log(`worker: not running (port ${s.port})
-provider: ${s.provider} \xB7 model: ${s.model}`);
+      if (!await isHealthy()) return console.log(`worker: not running (port ${s.port})`);
       const [health, stats] = await Promise.all([
         request("/api/health").then((r) => r.json()),
         request("/api/stats").then((r) => r.json())
       ]);
       console.log(`worker: running \xB7 pid ${health.pid} \xB7 v${health.version} \xB7 ${workerUrl()}`);
-      console.log(`provider: ${health.provider} \xB7 model: ${health.model}`);
       console.log(Object.entries(stats).map(([k, v]) => `${k}: ${v}`).join(" \xB7 "));
       return;
     }
@@ -355,10 +340,6 @@ provider: ${s.provider} \xB7 model: ${s.model}`);
       if (!existsSync3(paths.log())) return console.log("no log yet");
       const lines = readFileSync3(paths.log(), "utf8").trimEnd().split("\n");
       return console.log(lines.slice(-Number(args[0] ?? 50)).join("\n"));
-    }
-    case "retry": {
-      const out = JSON.parse(await text("/api/retry-failed", {}));
-      return console.log(`requeued ${out.requeued} failed events`);
     }
     case "cursor":
       return cursorCommand(args);

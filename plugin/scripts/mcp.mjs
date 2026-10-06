@@ -36619,7 +36619,7 @@ server.registerTool(
   "search",
   {
     title: "Search memory",
-    description: "Step 1 of 3. Full-text search over observations from past Claude Code sessions (decisions, bug fixes, discoveries, changes). Returns a compact index of IDs and titles (~50 tokens per hit), plus matching session summaries. Use it before re-investigating something that may have been done before. Then call `timeline` or `get_observations` with the IDs that look relevant.",
+    description: "Step 1 of 4. Full-text search over observations from past Claude Code sessions (decisions, bug fixes, discoveries, changes). Returns a compact index of IDs and titles (~50 tokens per hit), plus matching session summaries. Use it before re-investigating something that may have been done before. Then call `timeline` or `get_observations` with the IDs that look relevant. To store new knowledge, call `save_memory` \u2014 memories are not written automatically.",
     inputSchema: {
       query: external_exports.string().optional().describe("Words to search for. Omit to list the most recent observations."),
       project: external_exports.string().optional().describe("Project name (the folder name of the repo). Omit to search all projects."),
@@ -36637,7 +36637,7 @@ server.registerTool(
   "timeline",
   {
     title: "Memory timeline",
-    description: "Step 2 of 3. Shows what happened before and after one observation in the same project, to understand the context of a search hit. Pass `anchor` (an observation ID from search) or `query` (the best match becomes the anchor).",
+    description: "Step 2 of 4. Shows what happened before and after one observation in the same project, to understand the context of a search hit. Pass `anchor` (an observation ID from search) or `query` (the best match becomes the anchor).",
     inputSchema: {
       anchor: external_exports.number().int().optional().describe("Observation ID to center on"),
       query: external_exports.string().optional().describe("Used to find the anchor when no ID is given"),
@@ -36653,7 +36653,7 @@ server.registerTool(
   "get_observations",
   {
     title: "Get observation details",
-    description: "Step 3 of 3. Full details (narrative, facts, files) for specific observation IDs. Only fetch IDs you picked from `search` or `timeline`; each costs ~300-800 tokens.",
+    description: "Step 3 of 4. Full details (narrative, facts, files) for specific observation IDs. Only fetch IDs you picked from `search` or `timeline`; each costs ~300-800 tokens.",
     inputSchema: {
       ids: external_exports.array(external_exports.number().int()).min(1).max(50).describe("Observation IDs, e.g. [123, 456]"),
       project: external_exports.string().optional()
@@ -36661,5 +36661,44 @@ server.registerTool(
     annotations: { readOnlyHint: true }
   },
   (args) => call("/api/observations/batch", args)
+);
+server.registerTool(
+  "save_memory",
+  {
+    title: "Save a memory",
+    description: "Step 4 of 4. Persist something worth remembering from this session (a decision, bug fix, discovery, or change). You must call this yourself when you learn or decide something durable; nothing else writes observations. Do not save trivia, secrets, or private content.",
+    inputSchema: {
+      text: external_exports.string().describe("What to remember: what happened, why it matters, and what a future session should know"),
+      title: external_exports.string().optional().describe("Short headline, max ~80 characters. Derived from text if omitted"),
+      subtitle: external_exports.string().optional().describe("One sentence expanding the title"),
+      type: external_exports.enum(OBSERVATION_TYPES).optional().describe("Default discovery"),
+      facts: external_exports.array(external_exports.string()).optional().describe("Atomic facts a future session can trust"),
+      concepts: external_exports.array(external_exports.string()).optional().describe("Short topic tags, e.g. auth, caching"),
+      files_read: external_exports.array(external_exports.string()).optional(),
+      files_modified: external_exports.array(external_exports.string()).optional(),
+      project: external_exports.string().optional().describe("Project folder name. Omit to use the current workspace"),
+      session_id: external_exports.string().optional().describe("Editor session id when known")
+    },
+    annotations: { readOnlyHint: false, idempotentHint: false }
+  },
+  (args) => call("/api/memory/save", args)
+);
+server.registerTool(
+  "save_summary",
+  {
+    title: "Save a session summary",
+    description: "Write the end-of-request summary so a future session can pick up this work. Call after a substantial request: what was asked, learned, completed, and what remains.",
+    inputSchema: {
+      request: external_exports.string().optional().describe("What the user asked for, in one sentence"),
+      investigated: external_exports.string().optional().describe("What was explored or checked"),
+      learned: external_exports.string().optional().describe("Non-obvious things learned"),
+      completed: external_exports.string().optional().describe("What was actually done"),
+      next_steps: external_exports.string().optional().describe("Open work; empty if none"),
+      project: external_exports.string().optional(),
+      session_id: external_exports.string().optional()
+    },
+    annotations: { readOnlyHint: false, idempotentHint: false }
+  },
+  (args) => call("/api/memory/summary", args)
 );
 await server.connect(new StdioServerTransport());

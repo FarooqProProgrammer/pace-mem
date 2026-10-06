@@ -248,6 +248,17 @@ export class Store {
     return this.get<SessionRow>('SELECT * FROM sessions WHERE id = ?', id);
   }
 
+  /** Prefer an explicit session, else the latest active one for the project, else a manual bucket. */
+  sessionForWrite(project: string, contentSessionId?: string, cwd?: string): SessionRow {
+    if (contentSessionId) return this.ensureSession(contentSessionId, project, cwd);
+    const active = this.get<SessionRow>(
+      `SELECT * FROM sessions WHERE project = ? AND status = 'active' ORDER BY last_activity_at DESC LIMIT 1`,
+      project,
+    );
+    if (active) return active;
+    return this.ensureSession(`manual:${project}`, project, cwd);
+  }
+
   /** Records a prompt and returns its 1-based number within the session. */
   addPrompt(sessionId: number, project: string, text: string): number {
     return this.tx(() => {

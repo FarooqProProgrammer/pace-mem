@@ -54,6 +54,8 @@ describe('cursor host adapter', () => {
   it("skips pace-mem's own MCP tools", () => {
     expect(cursor.isOwnTool('MCP:search')).toBe(true);
     expect(cursor.isOwnTool('MCP:get_observations')).toBe(true);
+    expect(cursor.isOwnTool('MCP:save_memory')).toBe(true);
+    expect(cursor.isOwnTool('MCP:save_summary')).toBe(true);
     expect(cursor.isOwnTool('Shell')).toBe(false);
   });
 

@@ -176,66 +176,6 @@ export const VIEWER_HTML = /* html */ `<!doctype html>
     <div id="envBanner" class="banner" hidden></div>
 
     <div class="panel">
-      <h3>Compression model</h3>
-      <p class="lede">The model that turns raw tool calls into memories and writes session summaries.</p>
-      <div class="row">
-        <label class="name">Provider</label>
-        <div>
-          <div class="choices">
-            <label class="choice"><input type="radio" name="provider" value="claude-cli"><b>Claude Code login</b>
-              <div>Runs <code>claude -p</code>. Usage counts against your Claude plan. Needs Claude Code installed.</div></label>
-            <label class="choice"><input type="radio" name="provider" value="anthropic"><b>Anthropic API key</b>
-              <div>Calls the API directly and bills your key. Works without Claude Code (e.g. Cursor only).</div></label>
-          </div>
-          <div class="err" data-err="provider"></div>
-        </div>
-      </div>
-      <div class="row" id="apiKeyRow">
-        <label class="name" for="anthropicApiKey">API key</label>
-        <div>
-          <div class="inline">
-            <input id="anthropicApiKey" type="password" autocomplete="off" placeholder="sk-ant-…">
-            <button class="btn sm danger" id="removeKey" type="button" hidden>Remove key</button>
-          </div>
-          <div class="hint" id="keyHint">Leave blank to use the ANTHROPIC_API_KEY environment variable.</div>
-          <div class="err" data-err="anthropicApiKey"></div>
-        </div>
-      </div>
-      <div class="row">
-        <label class="name" for="modelSelect">Model</label>
-        <div>
-          <select id="modelSelect">
-            <option value="claude-opus-5-5">Claude Opus 5.5: best memories, highest cost</option>
-            <option value="claude-sonnet-5-5">Claude Sonnet 5.5: strong and cheaper</option>
-            <option value="claude-haiku-4-5">Claude Haiku 4.5: cheapest, fastest</option>
-            <option value="__custom">Custom model ID…</option>
-          </select>
-          <input id="modelCustom" type="text" placeholder="claude-…" style="margin-top:6px" hidden>
-          <div class="err" data-err="model"></div>
-        </div>
-      </div>
-      <div class="row">
-        <label class="name">Effort</label>
-        <div>
-          <div class="seg" id="effortSeg">
-            <label><input type="radio" name="effort" value="low">Low</label>
-            <label><input type="radio" name="effort" value="medium">Medium</label>
-            <label><input type="radio" name="effort" value="high">High</label>
-          </div>
-          <div class="hint" id="effortHint">How hard the model thinks per batch. Low is plenty for summarising tool calls.</div>
-        </div>
-      </div>
-      <div class="row">
-        <span class="name">Check</span>
-        <div>
-          <button class="btn" id="testBtn" type="button">Test connection</button>
-          <div class="hint">Makes one tiny call with the <em>saved</em> settings.</div>
-          <div class="result" id="testResult"></div>
-        </div>
-      </div>
-    </div>
-
-    <div class="panel">
       <h3>Session context</h3>
       <p class="lede">What a new session sees about earlier work in the same project.</p>
       <div class="row">
@@ -262,7 +202,7 @@ export const VIEWER_HTML = /* html */ `<!doctype html>
 
     <div class="panel">
       <h3>Capture &amp; privacy</h3>
-      <p class="lede">What gets recorded, before anything is stored or sent to a model. <code>&lt;private&gt;…&lt;/private&gt;</code> content is always dropped.</p>
+      <p class="lede">Privacy filters applied to memories the agent saves with <code>save_memory</code>. <code>&lt;private&gt;…&lt;/private&gt;</code> content is always dropped.</p>
       <div class="row">
         <label class="name" for="redactSecrets">Redact secrets</label>
         <div><label class="switch"><input id="redactSecrets" type="checkbox"><span></span></label>
@@ -281,24 +221,8 @@ export const VIEWER_HTML = /* html */ `<!doctype html>
       <div class="row">
         <label class="name" for="maxPayloadBytes">Max payload size</label>
         <div><div class="inline"><input id="maxPayloadBytes" class="small" type="number" min="1000" max="200000" step="1000"> bytes</div>
-          <div class="hint">Per tool input/output. Larger keeps more detail but costs more tokens.</div>
+          <div class="hint">Per field on memories the agent saves. Larger keeps more detail.</div>
           <div class="err" data-err="maxPayloadBytes"></div></div>
-      </div>
-    </div>
-
-    <div class="panel">
-      <h3>Batching</h3>
-      <p class="lede">Tool calls are compressed in batches: fewer, larger model calls cost less.</p>
-      <div class="row">
-        <label class="name" for="batchSize">Batch size</label>
-        <div><input id="batchSize" class="small" type="number" min="1" max="50">
-          <div class="hint">Max tool calls per model call.</div><div class="err" data-err="batchSize"></div></div>
-      </div>
-      <div class="row">
-        <label class="name" for="batchDelaySeconds">Quiet period</label>
-        <div><div class="inline"><input id="batchDelaySeconds" class="small" type="number" min="0" max="120" step="1"> seconds</div>
-          <div class="hint">Wait this long after the last tool call before compressing.</div>
-          <div class="err" data-err="batchDelaySeconds"></div></div>
       </div>
     </div>
 
@@ -314,7 +238,7 @@ export const VIEWER_HTML = /* html */ `<!doctype html>
         <span class="name">Defaults</span>
         <div class="inline">
           <button class="btn danger" id="resetBtn" type="button">Reset to defaults</button>
-          <span id="resetConfirm" hidden>Reset every setting except the API key? <button class="btn sm danger solid" id="resetYes" type="button">Reset</button> <button class="btn sm" id="resetNo" type="button">Cancel</button></span>
+          <span id="resetConfirm" hidden>Reset every setting? <button class="btn sm danger solid" id="resetYes" type="button">Reset</button> <button class="btn sm" id="resetNo" type="button">Cancel</button></span>
         </div>
       </div>
     </div>
@@ -326,7 +250,7 @@ export const VIEWER_HTML = /* html */ `<!doctype html>
     <p class="lede">Editors that record into and read from this memory. They all share one database.</p>
     <div class="panel">
       <h3>Claude Code</h3>
-      <p class="lede">Installed as a plugin: hooks, the search tools and a skill.</p>
+      <p class="lede">Installed as a plugin: hooks, search tools, <code>save_memory</code>, and a skill.</p>
       <div id="ccStatus"></div>
       <div class="hint" style="margin-top:10px">Install or update from a terminal:</div>
       <div class="cmd"><code>claude plugin marketplace add &lt;path-to-pace-mem-repo&gt;</code><button class="btn sm" data-copy type="button">Copy</button></div>
@@ -349,11 +273,6 @@ export const VIEWER_HTML = /* html */ `<!doctype html>
     <h2>Status</h2>
     <p class="lede" id="workerLine"></p>
     <div class="tiles" id="tiles"></div>
-    <div class="panel">
-      <h3>Queue</h3>
-      <p class="lede">Tool calls that failed to compress 3 times stop retrying. Fix the cause (often the provider or key), then retry them.</p>
-      <div class="inline"><button class="btn" id="retryBtn" type="button">Retry failed events</button><span class="result" id="retryResult"></span></div>
-    </div>
     <div class="panel">
       <h3>Projects</h3>
       <p class="lede">A project is the folder name of the workspace. Deleting a project removes its memories, summaries, prompts and raw tool calls.</p>
@@ -413,7 +332,7 @@ let stats = {};
 async function refreshStats() {
   try {
     stats = await api('/api/stats');
-    $('#headline').textContent = fmt(stats.observations) + ' memories · ' + fmt(stats.sessions) + ' sessions' + (stats.pending ? ' · ' + stats.pending + ' queued' : '');
+    $('#headline').textContent = fmt(stats.observations) + ' memories · ' + fmt(stats.sessions) + ' sessions';
     if ($('section[data-tab="status"]').classList.contains('active')) renderTiles();
   } catch (e) { $('#headline').textContent = 'worker unreachable'; }
 }
@@ -513,17 +432,15 @@ async function loadProjects() {
 }
 
 // ── settings ──────────────────────────────────────────────────────────
-const NUMERIC = ['contextObservations', 'contextSummaries', 'batchSize', 'batchDelaySeconds', 'maxPayloadBytes', 'port'];
-const PRESET_MODELS = ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-4-5'];
+const NUMERIC = ['contextObservations', 'contextSummaries', 'maxPayloadBytes', 'port'];
 let saved = null, draft = null, settingsMeta = null;
 
 const clone = (o) => JSON.parse(JSON.stringify(o));
-const noEffort = (m) => /haiku|sonnet-4-5|claude-3|-4-0|-4-1|-4-2025/.test(m);
 
 async function loadSettings() {
   settingsMeta = await api('/api/settings');
   saved = settingsMeta.settings;
-  draft = clone(saved); draft.anthropicApiKey = '';
+  draft = clone(saved);
   $('#settingsPath').textContent = settingsMeta.paths.settings;
   const env = settingsMeta.activeEnvOverrides;
   $('#envBanner').hidden = !env.length;
@@ -532,30 +449,9 @@ async function loadSettings() {
 }
 
 function renderSettings() {
-  $$('input[name=provider]').forEach((r) => (r.checked = r.value === draft.provider));
-  $$('input[name=effort]').forEach((r) => (r.checked = r.value === draft.effort));
-  const preset = PRESET_MODELS.includes(draft.model);
-  $('#modelSelect').value = preset ? draft.model : '__custom';
-  $('#modelCustom').hidden = preset;
-  if (!preset) $('#modelCustom').value = draft.model;
   NUMERIC.forEach((k) => ($('#' + k).value = draft[k]));
   $('#redactSecrets').checked = !!draft.redactSecrets;
-  $('#anthropicApiKey').value = draft.anthropicApiKey || '';
-  renderChips(); syncDependent(); clearErrors(); updateSavebar();
-}
-
-function syncDependent() {
-  const usesApiKey = draft.provider === 'anthropic';
-  $('#apiKeyRow').style.display = usesApiKey ? '' : 'none';
-  $('#keyHint').textContent = saved.hasApiKey
-    ? 'A key ending in ' + saved.apiKeyHint + ' is saved. Type a new one to replace it.'
-    : 'Leave blank to use the ANTHROPIC_API_KEY environment variable.';
-  $('#removeKey').hidden = !saved.hasApiKey || draft.anthropicApiKey === null;
-  const skipEffort = noEffort(draft.model);
-  $('#effortSeg').classList.toggle('disabled', skipEffort);
-  $('#effortHint').textContent = skipEffort
-    ? 'This model does not take an effort setting; it is ignored.'
-    : 'How hard the model thinks per batch. Low is plenty for summarising tool calls.';
+  renderChips(); clearErrors(); updateSavebar();
 }
 
 function renderChips() {
@@ -568,11 +464,9 @@ function renderChips() {
 function diff() {
   if (!saved || !draft) return {};
   const out = {};
-  for (const k of ['provider', 'model', 'effort', 'redactSecrets', 'skipTools'].concat(NUMERIC)) {
+  for (const k of ['redactSecrets', 'skipTools'].concat(NUMERIC)) {
     if (JSON.stringify(draft[k]) !== JSON.stringify(saved[k])) out[k] = draft[k];
   }
-  if (draft.anthropicApiKey === null) out.anthropicApiKey = '';
-  else if (draft.anthropicApiKey) out.anthropicApiKey = draft.anthropicApiKey;
   return out;
 }
 
@@ -586,20 +480,8 @@ function updateSavebar() {
 function clearErrors() { $$('[data-err]').forEach((e) => (e.textContent = '')); }
 
 function bindSettings() {
-  $$('input[name=provider]').forEach((r) => (r.onchange = () => { draft.provider = r.value; syncDependent(); updateSavebar(); }));
-  $$('input[name=effort]').forEach((r) => (r.onchange = () => { draft.effort = r.value; updateSavebar(); }));
-  $('#modelSelect').onchange = () => {
-    const v = $('#modelSelect').value;
-    $('#modelCustom').hidden = v !== '__custom';
-    if (v === '__custom') { $('#modelCustom').focus(); draft.model = $('#modelCustom').value.trim() || draft.model; }
-    else draft.model = v;
-    syncDependent(); updateSavebar();
-  };
-  $('#modelCustom').oninput = () => { draft.model = $('#modelCustom').value.trim(); syncDependent(); updateSavebar(); };
   NUMERIC.forEach((k) => ($('#' + k).oninput = () => { draft[k] = $('#' + k).value === '' ? NaN : Number($('#' + k).value); updateSavebar(); }));
   $('#redactSecrets').onchange = () => { draft.redactSecrets = $('#redactSecrets').checked; updateSavebar(); };
-  $('#anthropicApiKey').oninput = () => { draft.anthropicApiKey = $('#anthropicApiKey').value.trim(); updateSavebar(); };
-  $('#removeKey').onclick = () => { draft.anthropicApiKey = null; $('#anthropicApiKey').value = ''; syncDependent(); updateSavebar(); toast('Key will be removed when you save'); };
   const addSkip = () => {
     const v = $('#skipInput').value.trim();
     if (v && !draft.skipTools.includes(v)) { draft.skipTools.push(v); renderChips(); updateSavebar(); }
@@ -608,17 +490,16 @@ function bindSettings() {
   $('#skipAdd').onclick = addSkip;
   $('#skipInput').onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); addSkip(); } };
 
-  $('#discardBtn').onclick = () => { draft = clone(saved); draft.anthropicApiKey = ''; renderSettings(); };
+  $('#discardBtn').onclick = () => { draft = clone(saved); renderSettings(); };
   $('#saveBtn').onclick = async () => {
     clearErrors();
     const patch = diff();
     $('#saveBtn').disabled = true;
     try {
       const r = await api('/api/settings', patch);
-      saved = r.settings; draft = clone(saved); draft.anthropicApiKey = '';
+      saved = r.settings; draft = clone(saved);
       renderSettings();
       toast(r.restartRequired ? 'Saved. Restart the worker for the port change.' : 'Saved. Changes are live.');
-      $('#testResult').textContent = '';
       if ($('#previewProject').value) loadPreview();
     } catch (e) {
       const issues = (e.data && e.data.issues) || [];
@@ -628,22 +509,10 @@ function bindSettings() {
     $('#saveBtn').disabled = false;
   };
 
-  $('#testBtn').onclick = async () => {
-    const out = $('#testResult');
-    out.className = 'result'; out.textContent = 'Calling ' + saved.model + '…';
-    $('#testBtn').disabled = true;
-    try {
-      const r = await api('/api/settings/test', {});
-      out.className = 'result ' + (r.ok ? 'ok' : 'bad');
-      out.textContent = r.ok ? 'Working: ' + r.provider + ' · ' + r.model + ' answered in ' + (r.ms / 1000).toFixed(1) + 's.' : 'Failed: ' + (r.error || 'unexpected answer');
-    } catch (e) { out.className = 'result bad'; out.textContent = 'Failed: ' + e.message; }
-    $('#testBtn').disabled = false;
-  };
-
   $('#resetBtn').onclick = () => { $('#resetConfirm').hidden = false; $('#resetBtn').hidden = true; };
   $('#resetNo').onclick = () => { $('#resetConfirm').hidden = true; $('#resetBtn').hidden = false; };
   $('#resetYes').onclick = async () => {
-    try { const r = await api('/api/settings/reset', {}); saved = r.settings; draft = clone(saved); draft.anthropicApiKey = ''; renderSettings(); toast('Settings reset to defaults'); }
+    try { const r = await api('/api/settings/reset', {}); saved = r.settings; draft = clone(saved); renderSettings(); toast('Settings reset to defaults'); }
     catch (e) { toast(e.message, true); }
     $('#resetNo').onclick();
   };
@@ -708,14 +577,13 @@ function bindIntegrations() {
 
 // ── status ────────────────────────────────────────────────────────────
 function renderTiles() {
-  const t = [['observations', 'Memories'], ['summaries', 'Summaries'], ['sessions', 'Sessions'], ['prompts', 'Prompts'], ['pending', 'Queued'], ['failed', 'Failed']];
-  $('#tiles').innerHTML = t.map((x) => '<div class="tile' + (x[0] === 'failed' && stats.failed ? ' alert' : '') + '"><b>' + fmt(stats[x[0]]) + '</b><span>' + x[1] + '</span></div>').join('');
-  $('#retryBtn').disabled = !stats.failed;
+  const t = [['observations', 'Memories'], ['summaries', 'Summaries'], ['sessions', 'Sessions'], ['prompts', 'Prompts']];
+  $('#tiles').innerHTML = t.map((x) => '<div class="tile"><b>' + fmt(stats[x[0]]) + '</b><span>' + x[1] + '</span></div>').join('');
 }
 
 async function loadStatus() {
   const [h, s, projects] = await Promise.all([api('/api/health'), api('/api/settings'), loadProjects()]);
-  $('#workerLine').textContent = 'Worker v' + h.version + ' · pid ' + h.pid + ' · ' + h.provider + ' · ' + h.model;
+  $('#workerLine').textContent = 'Worker v' + h.version + ' · pid ' + h.pid;
   await refreshStats(); renderTiles();
   $('#pathsList').innerHTML = [['Data folder', s.paths.data], ['Database', s.paths.db], ['Settings', s.paths.settings], ['Log', s.paths.log]]
     .map((x) => '<dt>' + x[0] + '</dt><dd class="mono">' + esc(x[1]) + '</dd>').join('');
@@ -743,11 +611,6 @@ function askDeleteProject(btn) {
     catch (e) { toast(e.message, true); }
   };
 }
-
-$('#retryBtn').onclick = async () => {
-  try { const r = await api('/api/retry-failed', {}); $('#retryResult').className = 'result ok'; $('#retryResult').textContent = 'Requeued ' + r.requeued + ' events.'; refreshStats(); }
-  catch (e) { toast(e.message, true); }
-};
 
 // ── boot ──────────────────────────────────────────────────────────────
 let memoriesReady = false;

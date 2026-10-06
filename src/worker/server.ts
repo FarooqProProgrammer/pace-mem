@@ -9,7 +9,6 @@ import { cursorStatus, installCursor, uninstallCursor, userCursorDir } from '../
 import { sanitize, stripPrivate } from '../shared/privacy.js';
 import { OBSERVATION_TYPES, type SearchParams, type Store } from '../db/store.js';
 import type { Processor } from './processor.js';
-import type { Llm } from './llm.js';
 import { publicSettings, resetSettings, saveSettings } from './settings.js';
 import { fullObservation, indexTable, sessionContext, summaryBlock } from './format.js';
 import { VIEWER_HTML } from './viewer.js';
@@ -86,7 +85,37 @@ function claudeCodeStatus(): { installed: boolean; enabled: boolean } {
   }
 }
 
-export function createWorkerServer(store: Store, processor: Processor, settings: Settings, llm?: Llm): Server {
+const SaveMemorySchema = z.object({
+  text: z.string().trim().min(1).max(20_000),
+  title: z.string().trim().max(120).optional(),
+  subtitle: z.string().trim().max(240).optional(),
+  type: z.enum(OBSERVATION_TYPES).optional(),
+  facts: z.array(z.string().trim().min(1).max(500)).max(40).optional(),
+  concepts: z.array(z.string().trim().min(1).max(80)).max(20).optional(),
+  files_read: z.array(z.string().trim().min(1).max(400)).max(50).optional(),
+  files_modified: z.array(z.string().trim().min(1).max(400)).max(50).optional(),
+  project: z.string().trim().min(1).max(200).optional(),
+  session_id: z.string().trim().min(1).optional(),
+  cwd: z.string().optional(),
+});
+
+const SaveSummarySchema = z.object({
+  request: z.string().trim().max(2_000).optional(),
+  investigated: z.string().trim().max(4_000).optional(),
+  learned: z.string().trim().max(4_000).optional(),
+  completed: z.string().trim().max(4_000).optional(),
+  next_steps: z.string().trim().max(2_000).optional(),
+  project: z.string().trim().min(1).max(200).optional(),
+  session_id: z.string().trim().min(1).optional(),
+  cwd: z.string().optional(),
+});
+
+function headline(text: string, title?: string): string {
+  const line = (title?.trim() || text.trim().split(/\n/)[0] || 'Memory').replace(/\s+/g, ' ');
+  return line.length > 80 ? `${line.slice(0, 77)}…` : line;
+}
+
+export function createWorkerServer(store: Store, processor: Processor, settings: Settings): Server {
   const clean = (v: unknown) => sanitize(v, { redact: settings.redactSecrets, maxBytes: settings.maxPayloadBytes });
 
   const sessionFor = (body: Json) => {
@@ -97,7 +126,7 @@ export function createWorkerServer(store: Store, processor: Processor, settings:
   };
 
   const routes: Record<string, Handler> = {
-    'GET /api/health': () => ({ ok: true, version: VERSION, pid: process.pid, provider: settings.provider, model: settings.model }),
+    'GET /api/health': () => ({ ok: true, version: VERSION, pid: process.pid }),
 
     'GET /api/stats': () => store.stats(),
 
@@ -124,31 +153,68 @@ export function createWorkerServer(store: Store, processor: Processor, settings:
       return { session_db_id: session.id, prompt_number: n };
     },
 
-    // PostToolUse
+    // PostToolUse: tool calls are not compressed. The agent writes memories via MCP.
     'POST /api/events': ({ body }) => {
       const tool = str(body.tool_name);
       if (!tool) throw new HttpError(400, 'tool_name is required');
-      // Our own memory lookups are not new knowledge.
-      // Read live so skip-list edits in the dashboard apply to the next event.
       if (settings.skipTools.includes(tool) || tool.includes('pace-mem')) return { skipped: 'tool' };
-      const session = sessionFor(body);
-      const added = store.addToolEvent({
-        session_id: session.id,
-        project: session.project,
-        tool_use_id: str(body.tool_use_id) ?? `${tool}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        tool_name: tool,
-        tool_input: clean(body.tool_input),
-        tool_response: clean(body.tool_response),
-      });
-      return { queued: added };
+      return { skipped: 'agent-memory' };
     },
 
-    // Stop: Claude finished answering; summarise once the queue for this request drains.
     'POST /api/sessions/summarize': ({ body }) => {
-      const session = sessionFor(body);
-      if (session.prompt_counter > 0) store.requestSummary(session.id, session.prompt_counter);
-      processor.flush(session.id);
+      sessionFor(body);
       return { ok: true };
+    },
+
+    'POST /api/memory/save': ({ body }) => {
+      const parsed = SaveMemorySchema.parse(body);
+      const narrative = String(clean(stripPrivate(parsed.text))).trim();
+      if (!narrative) throw new HttpError(400, 'text is empty after privacy filters');
+      const project = parsed.project || projectFromCwd(parsed.cwd);
+      const session = store.sessionForWrite(project, parsed.session_id, parsed.cwd);
+      const id = store.insertObservation({
+        session_id: session.id,
+        project: session.project,
+        prompt_number: session.prompt_counter,
+        type: parsed.type ?? 'discovery',
+        title: headline(narrative, parsed.title ? String(clean(parsed.title)) : undefined),
+        subtitle: parsed.subtitle ? String(clean(parsed.subtitle)) : '',
+        narrative,
+        facts: (parsed.facts ?? []).map((f) => String(clean(f))),
+        concepts: parsed.concepts ?? [],
+        files_read: parsed.files_read ?? [],
+        files_modified: parsed.files_modified ?? [],
+      });
+      const row = store.getObservations([id])[0];
+      processor.emit('observation', row);
+      log(`saved observation #${id} for ${session.project}`);
+      return { success: true, id, title: row.title, project: session.project, message: `Memory saved as observation #${id}` };
+    },
+
+    'POST /api/memory/summary': ({ body }) => {
+      const parsed = SaveSummarySchema.parse(body);
+      const fields = {
+        request: parsed.request ? String(clean(stripPrivate(parsed.request))) : '',
+        investigated: parsed.investigated ? String(clean(parsed.investigated)) : '',
+        learned: parsed.learned ? String(clean(parsed.learned)) : '',
+        completed: parsed.completed ? String(clean(parsed.completed)) : '',
+        next_steps: parsed.next_steps ? String(clean(parsed.next_steps)) : '',
+      };
+      if (!fields.request && !fields.learned && !fields.completed) {
+        throw new HttpError(400, 'provide request, learned, or completed');
+      }
+      const project = parsed.project || projectFromCwd(parsed.cwd);
+      const session = store.sessionForWrite(project, parsed.session_id, parsed.cwd);
+      const id = store.insertSummary({
+        ...fields,
+        session_id: session.id,
+        project: session.project,
+        prompt_number: session.prompt_counter,
+      });
+      const row = { ...fields, id, session_id: session.id, project: session.project, prompt_number: session.prompt_counter, created_at: Date.now() };
+      processor.emit('summary', row);
+      log(`saved summary #${id} for ${session.project}`);
+      return { success: true, id, project: session.project, message: `Summary saved as #${id}` };
     },
 
     // SessionEnd
@@ -228,8 +294,8 @@ export function createWorkerServer(store: Store, processor: Processor, settings:
       defaults: publicSettings(DEFAULTS),
       paths: { data: dataDir(), db: paths.db(), settings: paths.settings(), log: paths.log() },
       // Environment variables win over the settings file at the next worker start.
-      envOverrides: { port: 'PACE_MEM_PORT', provider: 'PACE_MEM_PROVIDER', model: 'PACE_MEM_MODEL' } as Record<string, string>,
-      activeEnvOverrides: ['PACE_MEM_PORT', 'PACE_MEM_PROVIDER', 'PACE_MEM_MODEL'].filter((k) => process.env[k]),
+      envOverrides: { port: 'PACE_MEM_PORT' } as Record<string, string>,
+      activeEnvOverrides: ['PACE_MEM_PORT'].filter((k) => process.env[k]),
     }),
 
     'POST /api/settings': ({ body }) => {
@@ -242,22 +308,6 @@ export function createWorkerServer(store: Store, processor: Processor, settings:
       resetSettings(settings);
       log('settings reset to defaults');
       return { settings: publicSettings(settings) };
-    },
-
-    // One tiny model call with the current settings, so a bad key or model shows up immediately.
-    'POST /api/settings/test': async () => {
-      if (!llm) throw new HttpError(501, 'no model configured');
-      const started = Date.now();
-      try {
-        const out = await llm.generate({
-          system: 'You check that a connection works.',
-          prompt: 'Reply with ok set to true.',
-          schema: z.object({ ok: z.boolean() }),
-        });
-        return { ok: out.ok === true, provider: settings.provider, model: settings.model, ms: Date.now() - started };
-      } catch (err) {
-        return { ok: false, provider: settings.provider, model: settings.model, error: (err as Error).message };
-      }
     },
 
     // ── dashboard: data ──────────────────────────────────────────────────
@@ -334,7 +384,7 @@ export function createWorkerServer(store: Store, processor: Processor, settings:
     } catch (err) {
       if (err instanceof z.ZodError) {
         res.writeHead(400, { 'content-type': 'application/json' });
-        res.end(JSON.stringify({ error: 'invalid settings', issues: err.issues.map((i) => ({ field: i.path.join('.'), message: i.message })) }));
+        res.end(JSON.stringify({ error: 'invalid request', issues: err.issues.map((i) => ({ field: i.path.join('.'), message: i.message })) }));
         return;
       }
       const status = err instanceof HttpError ? err.status : 500;
